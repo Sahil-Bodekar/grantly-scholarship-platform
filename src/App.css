@@ -1319,3 +1319,44 @@ button {
     height: 230px;
   }
 }
+
+/* TECHNICAL QUALITY: ACCESSIBILITY AND RELIABILITY */
+
+:where(button, input, select, textarea, a, [tabindex]):focus-visible {
+  outline: 3px solid #9b87ff;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.scholarship-modal:focus {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 550px) {
+  .application-card {
+    gap: 10px;
+  }
+
+  .application-details {
+    flex-basis: calc(100% - 60px);
+  }
+
+  .application-card .remove-button {
+    margin-left: auto;
+  }
+}

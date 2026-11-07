@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   LayoutDashboard,
   Search,
@@ -15,12 +15,8 @@ import {
   CheckCircle,
   TrendingUp,
   Sparkles,
-  Heart,
   SlidersHorizontal,
   CalendarDays,
-  MapPin,
-  Building2,
-  ExternalLink,
 } from "lucide-react";
 
 import {
@@ -38,6 +34,73 @@ import {
 } from "recharts";
 
 import "./App.css";
+
+const DEFAULT_PROFILE = {
+  name: "Student",
+  course: "Diploma in Computer Technology",
+  state: "Maharashtra",
+  marks: "75",
+  income: "150000",
+};
+
+const ALLOWED_STATUSES = [
+  "Planning",
+  "Documents Pending",
+  "Submitted",
+  "Approved",
+  "Rejected",
+];
+
+function readStoredArray(key) {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function readStoredProfile() {
+  try {
+    const value = JSON.parse(
+      window.localStorage.getItem("grantly-profile") || "null",
+    );
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return DEFAULT_PROFILE;
+    }
+
+    return {
+      name:
+        typeof value.name === "string"
+          ? value.name.slice(0, 60)
+          : DEFAULT_PROFILE.name,
+      course:
+        typeof value.course === "string"
+          ? value.course.slice(0, 80)
+          : DEFAULT_PROFILE.course,
+      state:
+        typeof value.state === "string"
+          ? value.state.slice(0, 60)
+          : DEFAULT_PROFILE.state,
+      marks: String(value.marks ?? DEFAULT_PROFILE.marks),
+      income: String(value.income ?? DEFAULT_PROFILE.income),
+    };
+  } catch {
+    return DEFAULT_PROFILE;
+  }
+}
+
+function writeStoredValue(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // The app remains usable if browser storage is unavailable or full.
+  }
+}
+
+function cleanText(value, maxLength = 80) {
+  return value.replace(/[\u0000-\u001F\u007F]/g, "").slice(0, maxLength);
+}
 
 const scholarshipData = [
   {
@@ -183,11 +246,16 @@ function ScholarshipCard({ item, saved, onSave, onDetails }) {
       </div>
 
       <div className="card-actions">
-        <button className="card-button" onClick={() => onDetails(item)}>
+        <button
+          className="card-button"
+          type="button"
+          onClick={() => onDetails(item)}
+        >
           View Details <ArrowUpRight size={17} />
         </button>
 
         <button
+          type="button"
           className={`save-button ${saved ? "saved" : ""}`}
           onClick={() => onSave(item.id)}
           aria-label={saved ? "Remove saved scholarship" : "Save scholarship"}
@@ -332,60 +400,110 @@ function App() {
   const [activePage, setActivePage] = useState("Overview");
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const [savedIds, setSavedIds] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("grantly-saved")) || [];
-    } catch {
-      return [];
-    }
-  });
+  const [savedIds, setSavedIds] = useState(() =>
+    readStoredArray("grantly-saved").filter((id) =>
+      scholarshipData.some((item) => item.id === id),
+    ),
+  );
 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [sortBy, setSortBy] = useState("recommended");
   const [selectedScholarship, setSelectedScholarship] = useState(null);
+  const modalRef = useRef(null);
 
-  const [applications, setApplications] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("grantly-applications")) || [];
-    } catch {
-      return [];
-    }
-  });
+  const [applications, setApplications] = useState(() =>
+    readStoredArray("grantly-applications")
+      .filter(
+        (application) =>
+          application &&
+          scholarshipData.some((item) => item.id === application.id) &&
+          ALLOWED_STATUSES.includes(application.status),
+      )
+      .map((application) => {
+        const scholarship = scholarshipData.find(
+          (item) => item.id === application.id,
+        );
+        return {
+          id: scholarship.id,
+          name: scholarship.name,
+          provider: scholarship.provider,
+          amount: scholarship.amount,
+          status: application.status,
+        };
+      }),
+  );
 
-  const [profile, setProfile] = useState(() => {
-    try {
-      return (
-        JSON.parse(localStorage.getItem("grantly-profile")) || {
-          name: "Student",
-          course: "Diploma in Computer Technology",
-          state: "Maharashtra",
-          marks: "75",
-          income: "150000",
-        }
-      );
-    } catch {
-      return {
-        name: "Student",
-        course: "Diploma in Computer Technology",
-        state: "Maharashtra",
-        marks: "75",
-        income: "150000",
-      };
-    }
-  });
+  const [profile, setProfile] = useState(readStoredProfile);
 
   useEffect(() => {
-    localStorage.setItem("grantly-saved", JSON.stringify(savedIds));
+    writeStoredValue("grantly-saved", savedIds);
   }, [savedIds]);
 
   useEffect(() => {
-    localStorage.setItem("grantly-applications", JSON.stringify(applications));
+    writeStoredValue("grantly-applications", applications);
   }, [applications]);
 
   useEffect(() => {
-    localStorage.setItem("grantly-profile", JSON.stringify(profile));
+    writeStoredValue("grantly-profile", profile);
   }, [profile]);
+
+  useEffect(() => {
+    if (!selectedScholarship) return undefined;
+
+    const previousFocus = document.activeElement;
+    const modal = modalRef.current;
+    const focusableSelector =
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    modal?.querySelector(".modal-close")?.focus();
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setSelectedScholarship(null);
+        return;
+      }
+
+      if (event.key === "Tab" && modal) {
+        const focusable = [...modal.querySelectorAll(focusableSelector)];
+        if (focusable.length === 0) {
+          event.preventDefault();
+          return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus?.();
+    };
+  }, [selectedScholarship]);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [menuOpen]);
 
   const toggleSave = (id) => {
     setSavedIds((previous) =>
@@ -416,27 +534,34 @@ function App() {
     setActivePage("My Applications");
   };
 
-  const filteredScholarships = scholarshipData
-    .filter((item) => {
-      const matchesSearch =
-        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.provider.toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredScholarships = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLocaleLowerCase("en-IN");
 
-      const matchesCategory =
-        selectedCategory === "All" || item.category === selectedCategory;
+    return scholarshipData
+      .filter((item) => {
+        const matchesSearch =
+          item.name.toLocaleLowerCase("en-IN").includes(normalizedSearch) ||
+          item.provider.toLocaleLowerCase("en-IN").includes(normalizedSearch);
 
-      return matchesSearch && matchesCategory;
-    })
-    .sort((a, b) => {
-      if (sortBy === "amount") return b.amount - a.amount;
-      if (sortBy === "deadline") {
-        return new Date(a.deadline) - new Date(b.deadline);
-      }
-      return b.match - a.match;
-    });
+        const matchesCategory =
+          selectedCategory === "All" || item.category === selectedCategory;
 
-  const savedScholarships = scholarshipData.filter((item) =>
-    savedIds.includes(item.id),
+        return matchesSearch && matchesCategory;
+      })
+      .sort((a, b) => {
+        if (sortBy === "amount") return b.amount - a.amount;
+        if (sortBy === "deadline") {
+          const parseDeadline = (value) =>
+            new Date(`${value.slice(0, 6)} ${value.slice(7)}`).getTime();
+          return parseDeadline(a.deadline) - parseDeadline(b.deadline);
+        }
+        return b.match - a.match;
+      });
+  }, [searchTerm, selectedCategory, sortBy]);
+
+  const savedScholarships = useMemo(
+    () => scholarshipData.filter((item) => savedIds.includes(item.id)),
+    [savedIds],
   );
 
   const totalFunding = scholarshipData.reduce(
@@ -476,7 +601,12 @@ function App() {
 
           <span>GRANTLY</span>
 
-          <button className="close-menu" onClick={() => setMenuOpen(false)}>
+          <button
+            type="button"
+            aria-label="Close navigation menu"
+            className="close-menu"
+            onClick={() => setMenuOpen(false)}
+          >
             <X />
           </button>
         </div>
@@ -489,7 +619,9 @@ function App() {
 
             return (
               <button
+                type="button"
                 key={item.name}
+                aria-current={activePage === item.name ? "page" : undefined}
                 className={`nav-item ${
                   activePage === item.name ? "active" : ""
                 }`}
@@ -526,7 +658,13 @@ function App() {
 
       <main className="main-content">
         <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMenuOpen(true)}>
+          <button
+            type="button"
+            aria-label="Open navigation menu"
+            aria-expanded={menuOpen}
+            className="mobile-menu"
+            onClick={() => setMenuOpen(true)}
+          >
             <Menu />
           </button>
 
@@ -535,7 +673,13 @@ function App() {
             <h2>{activePage}</h2>
           </div>
 
-          <button className="notification-button">
+          <button
+            type="button"
+            className="notification-button"
+            aria-label="Notifications (demo)"
+            title="Notifications (demo)"
+            disabled
+          >
             <Bell size={20} />
             <span />
           </button>
@@ -553,6 +697,7 @@ function App() {
               </div>
 
               <button
+                type="button"
                 className="primary-button"
                 onClick={() => setActivePage("Discover")}
               >
@@ -607,6 +752,7 @@ function App() {
               </div>
 
               <button
+                type="button"
                 className="text-button"
                 onClick={() => setActivePage("Discover")}
               >
@@ -698,7 +844,9 @@ function App() {
               <div className="search-box">
                 <Search size={19} />
                 <input
-                  type="text"
+                  type="search"
+                  aria-label="Search scholarships or providers"
+                  maxLength={80}
                   placeholder="Search scholarships or providers..."
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
@@ -708,6 +856,7 @@ function App() {
               <div className="filter-control">
                 <SlidersHorizontal size={17} />
                 <select
+                  aria-label="Filter by scholarship category"
                   value={selectedCategory}
                   onChange={(event) => setSelectedCategory(event.target.value)}
                 >
@@ -720,6 +869,7 @@ function App() {
               </div>
 
               <select
+                aria-label="Sort scholarships"
                 className="sort-control"
                 value={sortBy}
                 onChange={(event) => setSortBy(event.target.value)}
@@ -764,6 +914,7 @@ function App() {
                   Explore scholarships and click the bookmark icon to save one.
                 </p>
                 <button
+                  type="button"
                   className="primary-button"
                   onClick={() => setActivePage("Discover")}
                 >
@@ -790,6 +941,7 @@ function App() {
                 <h3>No applications tracked yet</h3>
                 <p>Open a scholarship and select Add to Application Tracker.</p>
                 <button
+                  type="button"
                   className="primary-button"
                   onClick={() => setActivePage("Discover")}
                 >
@@ -811,6 +963,7 @@ function App() {
                     </div>
 
                     <select
+                      aria-label={`Application status for ${item.name}`}
                       value={item.status}
                       onChange={(event) =>
                         setApplications((previous) =>
@@ -830,7 +983,9 @@ function App() {
                     </select>
 
                     <button
+                      type="button"
                       className="remove-button"
+                      aria-label={`Remove ${item.name} from application tracker`}
                       onClick={() =>
                         setApplications((previous) =>
                           previous.filter(
@@ -864,6 +1019,29 @@ function App() {
               className="profile-form"
               onSubmit={(event) => {
                 event.preventDefault();
+                const marks = Number(profile.marks);
+                const income = Number(profile.income);
+                if (
+                  !profile.name.trim() ||
+                  !profile.course.trim() ||
+                  !profile.state.trim() ||
+                  !Number.isFinite(marks) ||
+                  marks < 0 ||
+                  marks > 100 ||
+                  !Number.isFinite(income) ||
+                  income < 0
+                ) {
+                  alert("Please enter valid profile details.");
+                  return;
+                }
+                setProfile((previous) => ({
+                  ...previous,
+                  name: previous.name.trim(),
+                  course: previous.course.trim(),
+                  state: previous.state.trim(),
+                  marks: String(marks),
+                  income: String(income),
+                }));
                 alert("Your profile has been saved on this device.");
               }}
             >
@@ -872,60 +1050,92 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label>Full Name</label>
+                <label htmlFor="profile-name">Full Name</label>
                 <input
+                  id="profile-name"
+                  required
+                  maxLength={60}
+                  autoComplete="name"
                   value={profile.name}
                   onChange={(event) =>
-                    setProfile({ ...profile, name: event.target.value })
+                    setProfile((previous) => ({
+                      ...previous,
+                      name: cleanText(event.target.value, 60),
+                    }))
                   }
                   placeholder="Enter your name"
                 />
               </div>
 
               <div className="form-group">
-                <label>Course / Education</label>
+                <label htmlFor="profile-course">Course / Education</label>
                 <input
+                  id="profile-course"
+                  required
+                  maxLength={80}
                   value={profile.course}
                   onChange={(event) =>
-                    setProfile({ ...profile, course: event.target.value })
+                    setProfile((previous) => ({
+                      ...previous,
+                      course: cleanText(event.target.value, 80),
+                    }))
                   }
                   placeholder="Enter your course"
                 />
               </div>
 
               <div className="form-group">
-                <label>State</label>
+                <label htmlFor="profile-state">State</label>
                 <input
+                  id="profile-state"
+                  required
+                  maxLength={60}
                   value={profile.state}
                   onChange={(event) =>
-                    setProfile({ ...profile, state: event.target.value })
+                    setProfile((previous) => ({
+                      ...previous,
+                      state: cleanText(event.target.value, 60),
+                    }))
                   }
                   placeholder="Enter your state"
                 />
               </div>
 
               <div className="form-group">
-                <label>Academic Marks (%)</label>
+                <label htmlFor="profile-marks">Academic Marks (%)</label>
                 <input
+                  id="profile-marks"
                   type="number"
+                  required
+                  step="0.01"
                   min="0"
                   max="100"
                   value={profile.marks}
                   onChange={(event) =>
-                    setProfile({ ...profile, marks: event.target.value })
+                    setProfile((previous) => ({
+                      ...previous,
+                      marks: event.target.value,
+                    }))
                   }
                   placeholder="Enter your marks"
                 />
               </div>
 
               <div className="form-group">
-                <label>Annual Family Income (₹)</label>
+                <label htmlFor="profile-income">Annual Family Income (₹)</label>
                 <input
+                  id="profile-income"
                   type="number"
+                  required
+                  step="1"
                   min="0"
+                  max="1000000000"
                   value={profile.income}
                   onChange={(event) =>
-                    setProfile({ ...profile, income: event.target.value })
+                    setProfile((previous) => ({
+                      ...previous,
+                      income: event.target.value,
+                    }))
                   }
                   placeholder="Enter annual income"
                 />
@@ -949,13 +1159,21 @@ function App() {
       {selectedScholarship && (
         <div
           className="modal-backdrop"
+          role="presentation"
           onClick={() => setSelectedScholarship(null)}
         >
           <div
             className="scholarship-modal"
+            ref={modalRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scholarship-modal-title"
             onClick={(event) => event.stopPropagation()}
           >
             <button
+              type="button"
+              aria-label="Close scholarship details"
               className="modal-close"
               onClick={() => setSelectedScholarship(null)}
             >
@@ -968,7 +1186,7 @@ function App() {
 
             <span className="category">{selectedScholarship.category}</span>
 
-            <h2>{selectedScholarship.name}</h2>
+            <h2 id="scholarship-modal-title">{selectedScholarship.name}</h2>
 
             <p className="provider">{selectedScholarship.provider}</p>
 
@@ -1005,6 +1223,7 @@ function App() {
             </div>
 
             <button
+              type="button"
               className="primary-button modal-apply"
               onClick={() => applyForScholarship(selectedScholarship)}
             >
